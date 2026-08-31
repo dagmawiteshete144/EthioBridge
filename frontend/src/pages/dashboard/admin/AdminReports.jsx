@@ -1,0 +1,224 @@
+import { useState, useEffect } from 'react';
+import PageHeader from '../../../components/common/PageHeader';
+import { useTranslation } from 'react-i18next';
+import { infraAPI, adminAPI } from '../../../services/api';
+import StatusBadge from '../../../components/common/StatusBadge';
+import LoadingSpinner from '../../../components/common/LoadingSpinner';
+import EmptyState from '../../../components/common/EmptyState';
+import Pagination from '../../../components/common/Pagination';
+import ConfirmModal from '../../../components/common/ConfirmModal';
+import { toast } from 'react-toastify';
+import { ClipboardList, Check, X } from 'lucide-react';
+
+const DEPARTMENTS = [
+  'Roads Authority','Bridge Authority','Water Bureau','Electric Utility',
+  'Education Bureau','Health Bureau','Disaster Risk Management',
+  'Municipality','General Services',
+];
+
+export default function AdminReports() {
+  const { t } = useTranslation();
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [selected, setSelected] = useState(null);
+  const [action, setAction] = useState('approve');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [delConfirm, setDelConfirm] = useState(null);
+  const [assignModal, setAssignModal] = useState(null);
+  const [assignForm, setAssignForm] = useState({ assignedTo: '', assignedDepartment: '', dueDate: '' });
+  const [govUsers, setGovUsers] = useState([]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const r = await infraAPI.getAll({ search, status, page, limit: 10 });
+      setReports(r.data.reports);
+      setPages(r.data.pages);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchData(); }, [search, status, page]);
+
+  const handleVerify = async () => {
+    setSaving(true);
+    try {
+      await infraAPI.verify(selected._id, { action, note });
+      toast.success(t('dashboard.reportUpdatedSuccess', { action }));
+      setSelected(null);
+      fetchData();
+    } catch (err) { toast.error(err.response?.data?.message || t('dashboard.actionFailed')); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await infraAPI.delete(id);
+      toast.success(t('admin.deleteSuccess'));
+      fetchData();
+    } catch (err) { toast.error(t('dashboard.deleteFailed')); }
+    setDelConfirm(null);
+  };
+
+  const openAssign = async (report) => {
+    setAssignModal(report);
+    setAssignForm({ assignedTo: '', assignedDepartment: report.department || report.assignedDepartment || '', dueDate: '' });
+    try {
+      const r = await infraAPI.getGovernmentUsers();
+      setGovUsers(r.data.users || []);
+    } catch (e) { setGovUsers([]); }
+  };
+
+  const handleAssign = async () => {
+    setSaving(true);
+    try {
+      await infraAPI.assign(assignModal._id, {
+        assignedTo: assignForm.assignedTo || undefined,
+        assignedDepartment: assignForm.assignedDepartment || undefined,
+        dueDate: assignForm.dueDate || undefined,
+      });
+      toast.success(t('dashboard.reportAssigned'));
+      setAssignModal(null);
+      fetchData();
+    } catch (err) { toast.error(err.response?.data?.message || t('dashboard.actionFailed')); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title={t('admin.reportMgmt')} />
+
+      <div className="flex flex-wrap gap-3">
+        <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder={t('common.search')} className="input-field flex-1 min-w-[180px]" />
+        <select value={status} onChange={e => { setStatus(e.target.value); setPage(1); }} className="input-field w-auto">
+          <option value="">{t('common.allStatuses')}</option>
+          {[{v:'Pending',l:t('dashboard.statusPending')},{v:'In Progress',l:t('dashboard.statusInProgress')},{v:'Resolved',l:t('dashboard.statusResolved')},{v:'Rejected',l:t('dashboard.statusRejected')}].map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
+        </select>
+      </div>
+
+      {loading ? <LoadingSpinner /> : reports.length === 0 ? <EmptyState icon={<ClipboardList size={48} strokeWidth={2} />} title={t('admin.noReports')} /> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-gray-50 dark:bg-gray-700 text-left">
+              <th className="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium">{t('common.report')}</th>
+              <th className="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium">{t('common.region')}</th>
+              <th className="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium">{t('common.submittedBy')}</th>
+              <th className="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium">{t('dashboard.assignedDept')}</th>
+              <th className="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium">{t('common.status')}</th>
+              <th className="px-4 py-3 text-gray-600 dark:text-gray-400 font-medium">{t('dashboard.actions')}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
+              {reports.map(r => (
+                <tr key={r._id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-gray-800 dark:text-gray-200 max-w-[200px] truncate">{r.title}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">{r.reportId}</p>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">{r.region}</td>
+                  <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">{r.submittedBy?.fullName || '—'}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {r.department || r.assignedDepartment ? (
+                      <span className="text-xs bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300 px-2 py-0.5 rounded-full">{r.department || r.assignedDepartment}</span>
+                    ) : <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1 flex-wrap">
+                      {r.status === 'Pending' && (
+                        <button onClick={() => { setSelected(r); setAction('approve'); setNote(''); }} className="text-xs bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-300 dark:hover:bg-green-900/40 px-2 py-1 rounded-lg">{t('dashboard.verify')}</button>
+                      )}
+                      {['Pending','Under Review','Approved','Reopened'].includes(r.status) && (
+                        <button onClick={() => openAssign(r)} className="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/40 px-2 py-1 rounded-lg">{t('dashboard.assignReport')}</button>
+                      )}
+                      <button onClick={() => setDelConfirm({ id: r._id, name: r.title })} className="text-xs bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40 px-2 py-1 rounded-lg">{t('common.delete')}</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Pagination page={page} pages={pages} onPageChange={setPage} />
+
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl dark:bg-gray-800 shadow-xl w-full max-w-md p-6">
+            <h3 className="font-bold text-lg mb-1">{t('dashboard.verifyReport')}</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{selected.title}</p>
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" value="approve" checked={action === 'approve'} onChange={() => setAction('approve')} />
+                  <span className="text-sm text-green-700 dark:text-green-300 font-medium"><Check size={16} strokeWidth={2} className="inline mr-1" />{t('admin.approve')}</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" value="reject" checked={action === 'reject'} onChange={() => setAction('reject')} />
+                  <span className="text-sm text-red-700 dark:text-red-300 font-medium"><X size={16} strokeWidth={2} className="inline mr-1" />{t('admin.reject')}</span>
+                </label>
+              </div>
+              <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} className="input-field" placeholder={t('dashboard.addVerificationNote')} />
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setSelected(null)} className="btn-secondary flex-1">{t('common.cancel')}</button>
+              <button onClick={handleVerify} disabled={saving}
+                className={`flex-1 py-2 rounded-lg font-semibold text-white ${action === 'approve' ? 'bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-400' : 'bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-400'}`}>
+                {saving ? t('dashboard.processing') : action === 'approve' ? t('admin.approve') : t('admin.reject')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl dark:bg-gray-800 shadow-xl w-full max-w-md p-6">
+            <h3 className="font-bold text-lg mb-1 text-gray-800 dark:text-gray-200">{t('dashboard.assignReport')}</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{assignModal.title} ({assignModal.reportId})</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('dashboard.department')}</label>
+                <select value={assignForm.assignedDepartment} onChange={e => setAssignForm(p => ({...p, assignedDepartment:e.target.value}))} className="input-field">
+                  <option value="">{t('dashboard.selectDepartment')}</option>
+                  {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              {govUsers.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('dashboard.assignTo')}</label>
+                  <select value={assignForm.assignedTo} onChange={e => setAssignForm(p => ({...p, assignedTo:e.target.value}))} className="input-field">
+                    <option value="">{t('dashboard.autoAssign')}</option>
+                    {govUsers.map(u => <option key={u._id} value={u._id}>{u.fullName} — {u.organizationName || u.role}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('dashboard.dueDate')}</label>
+                <input type="date" value={assignForm.dueDate} onChange={e => setAssignForm(p => ({...p, dueDate:e.target.value}))} className="input-field" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setAssignModal(null)} className="btn-secondary flex-1">{t('common.cancel')}</button>
+              <button onClick={handleAssign} disabled={saving} className="btn-primary flex-1">{saving ? t('dashboard.processing') : t('dashboard.assignReport')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={!!delConfirm}
+        title={t('dashboard.deleteReport')}
+        message={t('dashboard.deleteReportConfirm', { name: delConfirm?.name })}
+        confirmLabel={t('common.delete')}
+        danger
+        onConfirm={() => handleDelete(delConfirm.id)}
+        onCancel={() => setDelConfirm(null)}
+      />
+    </div>
+  );
+}
